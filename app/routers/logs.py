@@ -79,7 +79,7 @@ async def get_log_stats():
             {"$group": {"_id": "$service_name", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}}
         ]
-        service_cursor = collection.aggregate(service_pipeline)
+        service_cursor = await collection.aggregate(service_pipeline)
         services_stats = await service_cursor.to_list(length=100)
         
         # Aggregation: Group by level
@@ -87,7 +87,7 @@ async def get_log_stats():
             {"$group": {"_id": "$level", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}}
         ]
-        level_cursor = collection.aggregate(level_pipeline)
+        level_cursor = await collection.aggregate(level_pipeline)
         levels_stats = await level_cursor.to_list(length=100)
 
         # Get top 5 recent ERROR or CRITICAL logs

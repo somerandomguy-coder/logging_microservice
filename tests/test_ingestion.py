@@ -28,7 +28,7 @@ async def setup_test_env():
     
     # Gracefully stop queue and close MongoDB connection
     await queue_manager.stop()
-    close_mongo_connection()
+    await close_mongo_connection()
 
 @pytest.mark.asyncio
 async def test_health_check(setup_test_env):

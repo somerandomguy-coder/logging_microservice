@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     # Shutdown actions
     logger.info("server_shutting_down")
     await queue_manager.stop()
-    close_mongo_connection()
+    await close_mongo_connection()
 
 app = FastAPI(
     title="Centralized Log Ingestion & Analytics API",
