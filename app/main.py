@@ -14,7 +14,7 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     # Startup actions
     logger.info("server_starting")
-    connect_to_mongo()
+    await connect_to_mongo()
     await queue_manager.start()
     yield
     # Shutdown actions

@@ -1,9 +1,10 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.database import get_collection
 from app.models import LogLevel, LogPayload
 from app.services.log_service import queue_manager
+from app.auth import verify_api_key
 import structlog
 
 logger = structlog.get_logger()
@@ -12,19 +13,21 @@ router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 def serialize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     if not doc:
         return doc
-    # Convert ObjectId to string representation
     doc["id"] = str(doc["_id"])
     del doc["_id"]
     return doc
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def ingest_log(payload: Union[LogPayload, List[LogPayload]]):
-    # Log ingestion: enqueue the data and return 202 Accepted immediately
+async def ingest_log(
+    payload: Union[LogPayload, List[LogPayload]],
+    api_key: Optional[str] = Depends(verify_api_key)
+):
+    # Log ingestion: enqueue the data using Pydantic JSON serialization mode and return 202 Accepted
     if isinstance(payload, list):
         for item in payload:
-            await queue_manager.enqueue(item.model_dump())
+            await queue_manager.enqueue(item.model_dump(mode="json"))
     else:
-        await queue_manager.enqueue(payload.model_dump())
+        await queue_manager.enqueue(payload.model_dump(mode="json"))
     return {"status": "accepted"}
 
 
@@ -34,9 +37,10 @@ async def query_logs(
     level: Optional[LogLevel] = Query(None, description="Filter by log level"),
     start_time: Optional[datetime] = Query(None, description="Start timestamp filter (ISO format)"),
     end_time: Optional[datetime] = Query(None, description="End timestamp filter (ISO format)"),
-    message: Optional[str] = Query(None, description="Case-insensitive substring search on message"),
+    message: Optional[str] = Query(None, description="Keyword/phrase search using MongoDB Text Index"),
     limit: int = Query(50, ge=1, le=1000, description="Max logs to return"),
-    skip: int = Query(0, ge=0, description="Number of logs to skip")
+    skip: int = Query(0, ge=0, description="Number of logs to skip"),
+    api_key: Optional[str] = Depends(verify_api_key)
 ):
     collection = get_collection()
     if collection is None:
@@ -54,8 +58,10 @@ async def query_logs(
             mongo_filter["timestamp"]["$gte"] = start_time
         if end_time:
             mongo_filter["timestamp"]["$lte"] = end_time
+            
     if message:
-        mongo_filter["message"] = {"$regex": message, "$options": "i"}
+        # Use full-text index optimized query instead of slow regex substring scans
+        mongo_filter["$text"] = {"$search": message}
 
     try:
         cursor = collection.find(mongo_filter).sort("timestamp", -1).skip(skip).limit(limit)
@@ -65,8 +71,9 @@ async def query_logs(
         logger.error("error_querying_logs", error=str(e))
         raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
 
+
 @router.get("/stats", response_model=Dict[str, Any])
-async def get_log_stats():
+async def get_log_stats(api_key: Optional[str] = Depends(verify_api_key)):
     collection = get_collection()
     if collection is None:
         raise HTTPException(status_code=500, detail="Database connection not available")
@@ -105,3 +112,13 @@ async def get_log_stats():
     except Exception as e:
         logger.error("error_aggregating_stats", error=str(e))
         raise HTTPException(status_code=500, detail=f"Database aggregation error: {str(e)}")
+
+
+@router.get("/stats/queue", response_model=Dict[str, Any])
+async def get_queue_stats(api_key: Optional[str] = Depends(verify_api_key)):
+    # Returns the current Redis queue size to monitor latency/backpressure
+    size = await queue_manager.get_queue_size()
+    return {
+        "queue_length": size,
+        "healthy": True
+    }

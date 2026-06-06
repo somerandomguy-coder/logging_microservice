@@ -9,20 +9,27 @@ from app.config import settings
 
 # Override config for testing
 settings.mongo_db_name = "test_log_db"
+settings.redis_url = "redis://localhost:6379/1"  # Use Redis Database 1 for isolation
+settings.redis_queue_name = "test_log_ingestion_queue"
 settings.batch_size = 5          # Small batch size for faster testing
 settings.batch_interval = 0.5    # Small batch interval for faster tests
+settings.api_keys = ""           # Keep auth open by default for standard tests
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_test_env():
     # Connect to MongoDB and start batch queue manager
-    connect_to_mongo()
+    await connect_to_mongo()
     await queue_manager.start()
     
     # Clean the test collection
     collection = get_collection()
     if collection is not None:
         await collection.delete_many({})
+        
+    # Clean the test Redis queue
+    if queue_manager.redis is not None:
+        await queue_manager.redis.delete(settings.redis_queue_name)
         
     yield
     
@@ -50,7 +57,7 @@ async def test_ingest_single_log(setup_test_env):
     assert response.status_code == 202
     assert response.json() == {"status": "accepted"}
 
-    # Wait for the batch worker to flush it
+    # Wait for the batch worker to flush it from Redis to MongoDB
     await asyncio.sleep(0.7)
 
     collection = get_collection()
@@ -107,7 +114,7 @@ async def test_query_and_stats(setup_test_env):
         assert len(logs) == 1
         assert logs[0]["service_name"] == "payment-service"
 
-        # 3. Test Keyword search
+        # 3. Test Keyword search (MongoDB Text Index Query)
         resp = await ac.get("/api/v1/logs?message=login")
         assert resp.status_code == 200
         logs = resp.json()
@@ -121,3 +128,45 @@ async def test_query_and_stats(setup_test_env):
         assert stats["by_service"]["auth-service"] == 2
         assert stats["by_level"]["INFO"] == 1
         assert len(stats["recent_errors"]) == 1
+
+        # 5. Test Queue length stats
+        resp = await ac.get("/api/v1/logs/stats/queue")
+        assert resp.status_code == 200
+        q_stats = resp.json()
+        assert q_stats["queue_length"] == 0
+        assert q_stats["healthy"] is True
+
+@pytest.mark.asyncio
+async def test_api_key_auth(setup_test_env):
+    # Enable API Keys validation
+    settings.api_keys = "auth-service-key,payment-key"
+    
+    payload = {
+        "service_name": "test-service",
+        "level": "INFO",
+        "message": "Auth test log"
+    }
+    
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Ingest request without X-API-Key -> should fail (401)
+        resp = await ac.post("/api/v1/logs", json=payload)
+        assert resp.status_code == 401
+        
+        # 2. Ingest request with wrong X-API-Key -> should fail (401)
+        resp = await ac.post("/api/v1/logs", json=payload, headers={"X-API-Key": "invalid-secret"})
+        assert resp.status_code == 401
+        
+        # 3. Ingest request with valid X-API-Key -> should succeed (202)
+        resp = await ac.post("/api/v1/logs", json=payload, headers={"X-API-Key": "payment-key"})
+        assert resp.status_code == 202
+        
+        # 4. Query stats request without X-API-Key -> should fail (401)
+        resp = await ac.get("/api/v1/logs/stats")
+        assert resp.status_code == 401
+        
+        # 5. Query stats request with valid X-API-Key -> should succeed (200)
+        resp = await ac.get("/api/v1/logs/stats", headers={"X-API-Key": "auth-service-key"})
+        assert resp.status_code == 200
+        
+    # Reset API key validation to empty
+    settings.api_keys = ""
