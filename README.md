@@ -81,9 +81,9 @@ venv\Scripts\python tests\simulate_load.py
 ```
 
 ### File-Tailing Log Shipper
-You can also run the file-tailing daemon to stream app logs to the microservice:
+You can also run the file-tailing daemon to stream app logs to the microservice (specify `--api-key` if authorization is enabled):
 ```bash
-venv\Scripts\python shipper.py --file app.log --service payment-service
+venv\Scripts\python shipper.py --file app.log --service payment-service --api-key "your-api-key"
 ```
 
 ---
@@ -133,3 +133,35 @@ To protect logging endpoints:
 1. Define the `API_KEYS` environment variable as a comma-separated list of values (e.g. `API_KEYS=key1,key2`).
 2. Client log shippers must pass a valid key inside the `X-API-Key` request header.
 3. If `API_KEYS` is left blank, the service operates in open mode (useful for local development).
+
+---
+
+## 🌐 Cloud Deployment (Fly.io + MongoDB Atlas + Upstash Redis)
+
+To host the microservice online for free:
+
+### 1. Database (MongoDB Atlas)
+- Create a free **M0 cluster** on MongoDB Atlas.
+- In **Network Access**, whitelist all IPs (`0.0.0.0/0`) since Fly.io container outbound IPs are dynamic.
+- Copy your connection string (`mongodb+srv://...`).
+
+### 2. Message Queue (Upstash Redis)
+- Create a free Redis database on Upstash.
+- Copy the secure TLS connection URL (`rediss://...`) containing your generated password.
+
+### 3. API & Worker (Fly.io)
+- Install the `flyctl` CLI and login: `fly auth login`.
+- Run `fly launch` to initialize the app (using the preconfigured [fly.toml](fly.toml)). Choose **No** when asked to deploy immediately.
+- Bind your cloud database and queue credentials as secrets:
+  ```bash
+  fly secrets set MONGO_DETAILS="mongodb+srv://..." REDIS_URL="rediss://..." API_KEYS="your-key-here"
+  ```
+- Deploy the application container:
+  ```bash
+  fly deploy
+  ```
+
+Once deployed, you can ship logs from any service or tail logs using the CLI shipper directly to your live production endpoint:
+```bash
+python shipper.py --file mock_app.log --url https://logging-microservice.fly.dev/api/v1/logs --api-key your-key-here
+```
