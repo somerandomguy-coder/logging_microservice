@@ -37,6 +37,28 @@ A high-performance, asynchronous logging microservice built with **FastAPI**, **
 
 ---
 
+## 📸 Live Deployment Screenshots
+
+Below is the live cloud deployment of the logging microservice running under real network conditions:
+
+### 1. Interactive Swagger API Documentation
+Exposed live at `https://logging-microservice.fly.dev/docs`:
+![FastAPI Interactive Documentation](assets/fastapi_docs.png)
+
+### 2. Fly.io Application Console
+Stateless app container running in multi-machine high-availability mode on Fly.io:
+![Fly.io Application Console](assets/fly-io-2-healthy.png)
+
+### 3. Upstash Redis Message Queue Activity
+Buffering real-time log ingestion payloads with zero latency overhead:
+![Upstash Redis Console](assets/upstash_redis_cmd_chart.png)
+
+### 4. MongoDB Atlas Time-Series Storage
+Live logs fully queryable, indexed, and stored in native Time-Series collections:
+![MongoDB Atlas Query](assets/Mongodb_colelction_query.png)
+
+---
+
 ## 🚀 Quick Start Guide
 
 ### 1. Prerequisites (Docker)
