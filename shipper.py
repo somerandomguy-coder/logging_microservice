@@ -66,12 +66,15 @@ def parse_log_line(line: str, default_service: str) -> Dict[str, Any]:
             "metadata": {}
         }
 
-async def send_batch(client: httpx.AsyncClient, url: str, batch: List[Dict[str, Any]]) -> bool:
+async def send_batch(client: httpx.AsyncClient, url: str, batch: List[Dict[str, Any]], api_key: str = None) -> bool:
     max_retries = 5
     backoff = 0.5
+    headers = {}
+    if api_key:
+        headers["X-API-Key"] = api_key
     for attempt in range(max_retries):
         try:
-            response = await client.post(url, json=batch, timeout=5.0)
+            response = await client.post(url, json=batch, headers=headers, timeout=5.0)
             if response.status_code == 202:
                 print(f"[{datetime.now().isoformat()}] Successfully shipped {len(batch)} logs.")
                 return True
@@ -86,12 +89,14 @@ async def send_batch(client: httpx.AsyncClient, url: str, batch: List[Dict[str, 
             backoff *= 2
     return False
 
-async def tail_file_and_ship(file_path: str, url: str, service: str, batch_size: int, flush_interval: float):
+async def tail_file_and_ship(file_path: str, url: str, service: str, batch_size: int, flush_interval: float, api_key: str = None):
     print(f"Starting Python Log Shipper...")
     print(f"Monitoring: {file_path}")
     print(f"Destination: {url}")
     print(f"Default Service: {service}")
     print(f"Batch Configuration: max_size={batch_size}, max_interval={flush_interval}s")
+    if api_key:
+        print("API Key Authentication: Enabled")
     
     # Wait for the file to exist if it doesn't
     while not os.path.exists(file_path):
@@ -123,7 +128,7 @@ async def tail_file_and_ship(file_path: str, url: str, service: str, batch_size:
                             if parsed:
                                 batch.append(parsed)
                                 if len(batch) >= batch_size:
-                                    await send_batch(client, url, batch)
+                                    await send_batch(client, url, batch, api_key)
                                     batch = []
                                     last_flush = asyncio.get_event_loop().time()
                         last_position = f.tell()
@@ -134,7 +139,7 @@ async def tail_file_and_ship(file_path: str, url: str, service: str, batch_size:
             # Check flush interval
             now = asyncio.get_event_loop().time()
             if batch and (now - last_flush) >= flush_interval:
-                await send_batch(client, url, batch)
+                await send_batch(client, url, batch, api_key)
                 batch = []
                 last_flush = now
                 
@@ -147,6 +152,7 @@ def main():
     parser.add_argument("--service", default="shipper-service", help="Default service name for parsed logs")
     parser.add_argument("--batch-size", type=int, default=20, help="Max batch size to ship")
     parser.add_argument("--flush-interval", type=float, default=1.0, help="Max wait time before shipping batch")
+    parser.add_argument("--api-key", default=os.getenv("API_KEY"), help="X-API-Key for authorization (or set API_KEY env var)")
     
     args = parser.parse_args()
     
@@ -156,7 +162,8 @@ def main():
             url=args.url,
             service=args.service,
             batch_size=args.batch_size,
-            flush_interval=args.flush_interval
+            flush_interval=args.flush_interval,
+            api_key=args.api_key
         ))
     except KeyboardInterrupt:
         print("\nShipper stopped by user.")
